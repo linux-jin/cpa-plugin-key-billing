@@ -28,6 +28,16 @@ CREATE TABLE IF NOT EXISTS api_keys (
 	cache_creation_tokens INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS key_plan_bindings (
+	scope           TEXT    NOT NULL REFERENCES api_keys(scope) ON DELETE CASCADE,
+	position        INTEGER NOT NULL,
+	plan_id         TEXT    NOT NULL,
+	cycle_start_at  INTEGER NOT NULL DEFAULT 0,
+	cycle_end_at    INTEGER NOT NULL DEFAULT 0,
+	cycle_spent_usd REAL    NOT NULL DEFAULT 0,
+	PRIMARY KEY (scope, plan_id)
+);
+
 CREATE TABLE IF NOT EXISTS key_models (
 	scope                 TEXT    NOT NULL REFERENCES api_keys(scope) ON DELETE CASCADE,
 	billing_model         TEXT    NOT NULL,
@@ -80,6 +90,20 @@ CREATE TABLE IF NOT EXISTS plans (
 	amount_usd     REAL    NOT NULL DEFAULT 0,
 	period_kind    TEXT    NOT NULL DEFAULT '',
 	period_seconds INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS plan_model_groups (
+	plan_id  TEXT    NOT NULL,
+	position INTEGER NOT NULL,
+	group_id TEXT    NOT NULL,
+	PRIMARY KEY (plan_id, group_id)
+);
+
+CREATE TABLE IF NOT EXISTS plan_allowed_models (
+	plan_id  TEXT    NOT NULL,
+	position INTEGER NOT NULL,
+	model    TEXT    NOT NULL,
+	PRIMARY KEY (plan_id, model)
 );
 
 CREATE TABLE IF NOT EXISTS prices (

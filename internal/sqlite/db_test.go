@@ -3,6 +3,7 @@ package sqlite
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"cpa-key-billing/internal/billing"
@@ -13,6 +14,9 @@ import (
 // is created with the mode of the database, so the database has to carry the
 // restricted one before the driver ever opens it.
 func TestOpenRestrictsTheDatabaseAndItsSidecars(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX file permission bits")
+	}
 	path := filepath.Join(t.TempDir(), "state.db")
 	database := openDatabase(t, path)
 
@@ -35,6 +39,9 @@ func TestOpenRestrictsTheDatabaseAndItsSidecars(t *testing.T) {
 // left beside it, is narrowed on the way in rather than staying exposed for as
 // long as the file lives.
 func TestOpenNarrowsAnExistingDatabase(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX file permission bits")
+	}
 	path := filepath.Join(t.TempDir(), "state.db")
 	for _, name := range []string{path, path + "-wal"} {
 		if errWrite := os.WriteFile(name, nil, 0o644); errWrite != nil {

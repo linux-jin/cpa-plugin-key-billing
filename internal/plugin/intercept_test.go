@@ -22,12 +22,11 @@ func exhaustedApp(t *testing.T, resetAfter time.Duration) *App {
 			Period: billing.Period{Kind: billing.PeriodDaily},
 		}}
 		state.Keys[billing.CallerScope(testAPIKey)] = &billing.KeyState{
-			PlanID: "daily-5",
-			Cycle: billing.Cycle{
+			PlanBindings: []billing.PlanBinding{{PlanID: "daily-5", Cycle: billing.Cycle{
 				PlanID: "daily-5", SpentUSD: 5,
 				StartAt: now.Add(-12 * time.Hour),
 				EndAt:   now.Add(resetAfter),
-			},
+			}}},
 		}
 	})
 	return app
@@ -63,7 +62,8 @@ func TestInterceptNeverResetPlanHasNoRetryHint(t *testing.T) {
 	app := exhaustedApp(t, 30*time.Minute)
 	app.store.ReplaceAll(func(state *billing.State) {
 		state.Plans[0].Period = billing.Period{Kind: billing.PeriodNever}
-		state.Keys[billing.CallerScope(testAPIKey)].Cycle.EndAt = time.Time{}
+		binding, _ := state.Keys[billing.CallerScope(testAPIKey)].FindPlanBinding("daily-5")
+		binding.Cycle.EndAt = time.Time{}
 	})
 
 	resp := callIntercept(t, app, "openai")

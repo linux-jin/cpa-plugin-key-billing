@@ -65,9 +65,9 @@ func managementRegistration() ManagementRegistrationResponse {
 			{Method: http.MethodDelete, Path: managementBase + routeModelGroups, Description: "删除模型分组并解除相关 Key 的绑定。"},
 
 			{Method: http.MethodPost, Path: managementBase + routeKeysModels, Description: "设置 API Key 可用的模型分组和模型。"},
-			{Method: http.MethodPost, Path: managementBase + routeKeysBind, Description: "将 API Key 绑定到订阅计划。"},
-			{Method: http.MethodPost, Path: managementBase + routeKeysUnbind, Description: "解除 API Key 的订阅计划。"},
-			{Method: http.MethodPost, Path: managementBase + routeKeysReset, Description: "重置 API Key 的订阅额度。"},
+			{Method: http.MethodPost, Path: managementBase + routeKeysBind, Description: "为 API Key 增加订阅计划绑定。"},
+			{Method: http.MethodPost, Path: managementBase + routeKeysUnbind, Description: "解除 API Key 的指定或全部订阅计划。"},
+			{Method: http.MethodPost, Path: managementBase + routeKeysReset, Description: "重置 API Key 的指定或全部订阅额度。"},
 			{Method: http.MethodPost, Path: managementBase + routeKeysResetAll, Description: "重置所有周期性计划 API Key 的订阅额度。"},
 			{Method: http.MethodPost, Path: managementBase + routeKeysLabel, Description: "设置 API Key 备注。"},
 			{Method: http.MethodPost, Path: managementBase + routeKeysSync, Description: "同步 CLIProxyAPI 中的 API Key 列表。"},

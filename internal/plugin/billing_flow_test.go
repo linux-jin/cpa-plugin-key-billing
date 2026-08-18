@@ -362,7 +362,9 @@ func TestFlowEnforcementUsesRecordedSpend(t *testing.T) {
 	app := newAppWithPrice(t, true)
 	app.store.ReplaceAll(func(state *billing.State) {
 		state.Plans = []billing.Plan{{ID: "p", Name: "Tiny", AmountUSD: 0.0015, Period: billing.Period{Kind: billing.PeriodDaily}}}
-		state.Keys[flowScope()] = &billing.KeyState{PlanID: "p"}
+		state.Keys[flowScope()] = &billing.KeyState{
+			PlanBindings: []billing.PlanBinding{{PlanID: "p"}},
+		}
 	})
 	admit(t, app, "openai", "/v1/chat/completions")
 	billUsage(t, app, 1000, 0, 0, 500, 0)

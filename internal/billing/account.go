@@ -110,11 +110,14 @@ func (s *Store) RecordUsage(event UsageEvent) {
 			Cost:              cost,
 			ReasoningTokens:   record.Breakdown.Output.ReasoningTokens,
 		}
+		key.NormalizePlanBindings()
 		chargeCycle(key, event, cost.TotalUSD)
 		// A completion may arrive after its period ended. Close it now, but do
 		// not start the next period until another request is admitted.
-		if plan, hasPlan := state.FindPlan(key.PlanID); hasPlan {
-			settleExpiredCycle(key, plan, at)
+		if binding, bound := key.FindPlanBinding(event.CyclePlanID); bound {
+			if plan, hasPlan := state.FindPlan(binding.PlanID); hasPlan {
+				settleExpiredCycle(&binding.Cycle, plan, at)
+			}
 		}
 		return struct{}{}, Changes{
 			Keys:      []string{scope},
@@ -133,10 +136,11 @@ func chargeCycle(key *KeyState, event UsageEvent, costUSD float64) {
 	if event.CyclePlanID == "" || event.CycleStartAt.IsZero() {
 		return
 	}
-	if key.Cycle.PlanID != event.CyclePlanID || !key.Cycle.StartAt.Equal(event.CycleStartAt) {
+	binding, exists := key.FindPlanBinding(event.CyclePlanID)
+	if !exists || binding.Cycle.PlanID != event.CyclePlanID || !binding.Cycle.StartAt.Equal(event.CycleStartAt) {
 		return
 	}
-	key.Cycle.SpentUSD += costUSD
+	binding.Cycle.SpentUSD += costUSD
 }
 
 func (s *State) ensureKey(scope string) *KeyState {

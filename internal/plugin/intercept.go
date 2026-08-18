@@ -53,12 +53,13 @@ func (a *App) interceptBeforeAuth(raw []byte) ([]byte, error) {
 	// refusal is permanent rather than temporal, so reporting it as an exhausted
 	// budget would send the client back to retry; it also must not open a
 	// subscription period that the request was never admitted into.
-	if access := a.store.AuthorizeModel(scope, req.Model, req.RequestedModel); !access.Allowed {
+	access := a.store.AuthorizeModel(scope, req.Model, req.RequestedModel)
+	if !access.Allowed {
 		a.store.ReportModelBlock(scope, endpoint, access)
 		return OKEnvelope(modelForbiddenResponse(req.SourceFormat, access))
 	}
 
-	decision := a.store.Authorize(scope, now)
+	decision := a.store.Authorize(scope, access.Model, now)
 	if !decision.Allowed {
 		a.store.ReportQuotaBlock(scope, endpoint, decision)
 		return OKEnvelope(quotaExhaustedResponse(req.SourceFormat, decision, now))

@@ -100,6 +100,7 @@ func importJSONState(tx *sql.Tx, document *jsonState) error {
 		if key.ByModel == nil {
 			key.ByModel = make(map[string]*billing.Totals)
 		}
+		key.NormalizePlanBindings()
 		state.Keys[scope] = key
 	}
 	for index, credential := range document.Credentials {

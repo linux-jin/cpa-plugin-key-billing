@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+func mustBinding(t *testing.T, key *KeyState, planID string) *PlanBinding {
+	t.Helper()
+	binding, exists := key.FindPlanBinding(planID)
+	if !exists {
+		t.Fatalf("plan binding %q not found in %+v", planID, key.PlanBindings)
+	}
+	return binding
+}
+
 func TestBindingAndResetLeaveCycleInactive(t *testing.T) {
 	now := time.Date(2026, 8, 8, 7, 0, 0, 0, time.UTC)
 	store := newEnforceStore(t, now)
@@ -17,19 +26,19 @@ func TestBindingAndResetLeaveCycleInactive(t *testing.T) {
 		t.Fatalf("BindKey error = %v", errBind)
 	}
 	store.Read(func(state *State) {
-		if cycle := state.Keys["a"].Cycle; cycle != (Cycle{}) {
+		if cycle := mustBinding(t, state.Keys["a"], "p").Cycle; cycle != (Cycle{}) {
 			t.Fatalf("cycle after bind = %+v, want inactive", cycle)
 		}
 	})
 
-	if !store.Authorize("a", now).Allowed {
+	if !store.Authorize("a", "", now).Allowed {
 		t.Fatal("first use was blocked")
 	}
-	if errReset := store.ResetCycle("a"); errReset != nil {
+	if errReset := store.ResetCycle("a", ""); errReset != nil {
 		t.Fatalf("ResetCycle error = %v", errReset)
 	}
 	store.Read(func(state *State) {
-		if cycle := state.Keys["a"].Cycle; cycle != (Cycle{}) {
+		if cycle := mustBinding(t, state.Keys["a"], "p").Cycle; cycle != (Cycle{}) {
 			t.Fatalf("cycle after reset = %+v, want inactive", cycle)
 		}
 	})
@@ -44,19 +53,22 @@ func TestResetAllCyclesSparesPlansThatNeverReset(t *testing.T) {
 			{ID: "weekly", AmountUSD: 10, Period: Period{Kind: PeriodWeekly}},
 			{ID: "once", AmountUSD: 10, Period: Period{Kind: PeriodNever}},
 		}
-		state.Keys["periodic"] = &KeyState{PlanID: "weekly", Cycle: spent}
-		state.Keys["one-time"] = &KeyState{PlanID: "once", Cycle: Cycle{PlanID: "once", StartAt: now, SpentUSD: 3}}
-		state.Keys["unbound"] = &KeyState{Cycle: spent}
+		state.Keys["periodic"] = &KeyState{PlanBindings: []PlanBinding{{PlanID: "weekly", Cycle: spent}}}
+		state.Keys["one-time"] = &KeyState{PlanBindings: []PlanBinding{{
+			PlanID: "once", Cycle: Cycle{PlanID: "once", StartAt: now, SpentUSD: 3},
+		}}}
+		state.Keys["unbound"] = &KeyState{}
 	})
 
 	if reset := store.ResetAllCycles(); reset != 1 {
 		t.Fatalf("reset = %d, want only the periodic key", reset)
 	}
 	store.Read(func(state *State) {
-		if state.Keys["periodic"].Cycle != (Cycle{}) {
-			t.Fatalf("periodic = %+v, want an inactive cycle", state.Keys["periodic"].Cycle)
+		if cycle := mustBinding(t, state.Keys["periodic"], "weekly").Cycle; cycle != (Cycle{}) {
+			t.Fatalf("periodic = %+v, want an inactive cycle", cycle)
 		}
-		if state.Keys["one-time"].Cycle.SpentUSD != 3 || state.Keys["unbound"].Cycle.SpentUSD != 3 {
+		if mustBinding(t, state.Keys["one-time"], "once").Cycle.SpentUSD != 3 ||
+			len(state.Keys["unbound"].PlanBindings) != 0 {
 			t.Fatalf("keys = %+v, want the one-time and unbound keys untouched", state.Keys)
 		}
 	})
@@ -67,9 +79,9 @@ func TestKeyDirectorySettlesExpiredCycleWithoutRestartingIt(t *testing.T) {
 	store := newEnforceStore(t, now)
 	store.ReplaceAll(func(state *State) {
 		state.Plans = []Plan{{ID: "p", AmountUSD: 10, Period: Period{Kind: PeriodDaily}}}
-		state.Keys["a"] = &KeyState{PlanID: "p", Cycle: Cycle{
+		state.Keys["a"] = &KeyState{PlanBindings: []PlanBinding{{PlanID: "p", Cycle: Cycle{
 			PlanID: "p", StartAt: now.Add(-48 * time.Hour), EndAt: now.Add(-24 * time.Hour), SpentUSD: 2,
-		}}
+		}}}}
 	})
 
 	directory := store.KeyDirectory()
@@ -78,7 +90,7 @@ func TestKeyDirectorySettlesExpiredCycleWithoutRestartingIt(t *testing.T) {
 	}
 	store.Read(func(state *State) {
 		key := state.Keys["a"]
-		if key.Cycle != (Cycle{}) {
+		if mustBinding(t, key, "p").Cycle != (Cycle{}) {
 			t.Fatalf("key = %+v", key)
 		}
 	})
@@ -90,7 +102,7 @@ func TestPlanBindingTransactions(t *testing.T) {
 	store.ReplaceAll(func(state *State) {
 		state.Keys["a"] = &KeyState{}
 		state.Keys["b"] = &KeyState{}
-		state.Keys["owned"] = &KeyState{PlanID: "other"}
+		state.Keys["owned"] = &KeyState{PlanBindings: []PlanBinding{{PlanID: "other"}}}
 		state.Plans = []Plan{{ID: "other", AmountUSD: 1, Period: Period{Kind: PeriodNever}}}
 	})
 
@@ -103,18 +115,20 @@ func TestPlanBindingTransactions(t *testing.T) {
 		t.Fatalf("UpdatePlanWithBindings error = %v", err)
 	}
 	store.Read(func(state *State) {
-		if state.Keys["a"].PlanID != "" || state.Keys["b"].PlanID != "p" || state.Keys["b"].Cycle != (Cycle{}) {
+		if state.Keys["a"].HasPlan("p") || !state.Keys["b"].HasPlan("p") ||
+			mustBinding(t, state.Keys["b"], "p").Cycle != (Cycle{}) {
 			t.Fatalf("keys = %+v", state.Keys)
 		}
 	})
 
-	rejected := []string{"b", "owned"}
-	if _, err = store.UpdatePlanWithBindings(PlanPatch{ID: "p"}, &rejected); err == nil {
-		t.Fatal("stealing a key from another plan was accepted")
+	multi := []string{"b", "owned"}
+	if _, err = store.UpdatePlanWithBindings(PlanPatch{ID: "p"}, &multi); err != nil {
+		t.Fatalf("multi-plan update error = %v", err)
 	}
 	store.Read(func(state *State) {
-		if state.Keys["b"].PlanID != "p" || state.Keys["owned"].PlanID != "other" {
-			t.Fatalf("rejected update was not atomic: %+v", state.Keys)
+		if !state.Keys["b"].HasPlan("p") || !state.Keys["owned"].HasPlan("other") ||
+			!state.Keys["owned"].HasPlan("p") {
+			t.Fatalf("multi-plan bindings = %+v", state.Keys)
 		}
 	})
 }
@@ -168,8 +182,8 @@ func TestSyncKeysRetiresAMissingKeyWithoutLosingItsHistory(t *testing.T) {
 		if key.DeletedAt != now || key.InConfig {
 			t.Fatalf("key = %+v, want marked deleted and out of config", key)
 		}
-		if key.PlanID != "p" {
-			t.Fatalf("PlanID = %q, want the binding kept for a later re-add", key.PlanID)
+		if !key.HasPlan("p") {
+			t.Fatalf("bindings = %+v, want the binding kept for a later re-add", key.PlanBindings)
 		}
 		if key.Preview != PreviewKey(deletedKeyPlaintext) || key.Lifetime.Requests != 1 {
 			t.Fatalf("key = %+v, want identity and totals kept", key)
@@ -218,8 +232,8 @@ func TestUsageCommittedAfterRetirementDoesNotResurrectTheKey(t *testing.T) {
 			t.Fatalf("Lifetime = %+v, want the late usage still charged", key.Lifetime)
 		}
 		// The window was live at admission, so the spend belongs to it.
-		if key.Cycle.SpentUSD == 0 {
-			t.Fatalf("Cycle = %+v, want the admitted window charged", key.Cycle)
+		if cycle := mustBinding(t, key, "p").Cycle; cycle.SpentUSD == 0 {
+			t.Fatalf("Cycle = %+v, want the admitted window charged", cycle)
 		}
 	})
 }
@@ -247,11 +261,11 @@ func TestSyncKeysRestoresAReaddedKeyWithAFreshPeriod(t *testing.T) {
 		if !key.DeletedAt.IsZero() || !key.InConfig {
 			t.Fatalf("key = %+v, want it live again", key)
 		}
-		if key.PlanID != "p" {
-			t.Fatalf("PlanID = %q, want the subscription restored", key.PlanID)
+		if !key.HasPlan("p") {
+			t.Fatalf("bindings = %+v, want the subscription restored", key.PlanBindings)
 		}
-		if key.Cycle != (Cycle{}) {
-			t.Fatalf("Cycle = %+v, want a period that starts on next use", key.Cycle)
+		if cycle := mustBinding(t, key, "p").Cycle; cycle != (Cycle{}) {
+			t.Fatalf("Cycle = %+v, want a period that starts on next use", cycle)
 		}
 		if key.Lifetime.Requests != 1 {
 			t.Fatalf("Lifetime = %+v, want history kept across the round trip", key.Lifetime)
@@ -332,7 +346,7 @@ func TestPlanEditKeepsRetiredBindings(t *testing.T) {
 		t.Fatalf("UpdatePlanWithBindings error = %v", errUpdate)
 	}
 	store.Read(func(state *State) {
-		if state.Keys[scope].PlanID != "p" {
+		if !state.Keys[scope].HasPlan("p") {
 			t.Fatalf("retired key = %+v, want its binding kept", state.Keys[scope])
 		}
 	})

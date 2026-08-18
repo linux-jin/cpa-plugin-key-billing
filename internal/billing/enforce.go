@@ -24,7 +24,7 @@ type Decision struct {
 // The first admitted use starts a key-relative period. An elapsed period is
 // closed and a fresh one starts at this use; idle time never consumes a new
 // period.
-func (s *Store) Authorize(scope string, at time.Time) Decision {
+func (s *Store) Authorize(scope, billingModel string, at time.Time) Decision {
 	allowed := Decision{Allowed: true}
 	scope = strings.TrimSpace(scope)
 	if scope == "" {
@@ -35,36 +35,43 @@ func (s *Store) Authorize(scope string, at time.Time) Decision {
 	}
 	decision := updateResult(s, func(state *State) (Decision, Changes) {
 		key := state.Keys[scope]
-		if key == nil || key.PlanID == "" {
+		if key == nil {
 			return allowed, Changes{}
 		}
-		touched := Changes{Keys: []string{scope}}
-		plan, ok := state.FindPlan(key.PlanID)
-		if !ok {
-			// The bound plan was deleted; treat the key as unlimited and drop
-			// the stale window instead of blocking it forever.
-			key.PlanID = ""
-			key.Cycle = Cycle{}
-			return allowed, touched
+		changed := key.NormalizePlanBindings()
+		for _, planID := range key.PlanIDs() {
+			if _, exists := state.FindPlan(planID); !exists {
+				changed = key.UnbindPlan(planID) || changed
+			}
 		}
-		var changed Changes
-		if activateCycle(key, plan, at) {
-			changed = touched
+		binding, plan, matched := state.matchingPlanBinding(key, billingModel)
+		if !matched {
+			if changed {
+				return allowed, Changes{Keys: []string{scope}}
+			}
+			return allowed, Changes{}
+		}
+		if activateCycle(&binding.Cycle, plan, at) {
+			changed = true
 		}
 		current := Decision{
 			Allowed:      true,
 			PlanID:       plan.ID,
 			PlanName:     plan.Name,
 			LimitUSD:     plan.AmountUSD,
-			SpentUSD:     key.Cycle.SpentUSD,
-			CycleStartAt: key.Cycle.StartAt,
-			ResetAt:      key.Cycle.EndAt,
+			SpentUSD:     binding.Cycle.SpentUSD,
+			CycleStartAt: binding.Cycle.StartAt,
+			ResetAt:      binding.Cycle.EndAt,
 		}
-		if key.Cycle.SpentUSD < plan.AmountUSD {
-			return current, changed
+		changes := Changes{}
+		if changed {
+			changes.Keys = []string{scope}
+		}
+		if binding.Cycle.SpentUSD < plan.AmountUSD {
+			return current, changes
 		}
 		current.Allowed = false
-		return current, changed
+		return current, changes
 	})
 	return decision
 }

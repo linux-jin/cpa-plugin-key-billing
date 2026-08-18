@@ -53,8 +53,10 @@ func TestStateSurvivesAReopen(t *testing.T) {
 
 	state := billing.NewState()
 	state.Plans = []billing.Plan{
-		{ID: "weekly", Name: "Weekly 10", AmountUSD: 10, Period: billing.Period{Kind: billing.PeriodWeekly}},
-		{ID: "custom", Name: "Custom", AmountUSD: 2.5, Period: billing.Period{Kind: billing.PeriodCustom, Seconds: 3600}},
+		{ID: "weekly", Name: "Weekly 10", AmountUSD: 10, Period: billing.Period{Kind: billing.PeriodWeekly},
+			ModelGroupIDs: []string{"fast"}},
+		{ID: "custom", Name: "Custom", AmountUSD: 2.5, Period: billing.Period{Kind: billing.PeriodCustom, Seconds: 3600},
+			Models: []string{"claude-sonnet-4-5"}},
 	}
 	state.Prices = []billing.PriceRule{
 		{Pattern: "gpt-5.5", InputPer1M: 1, OutputPer1M: 2, CacheReadPer1M: price(0.1)},
@@ -63,15 +65,20 @@ func TestStateSurvivesAReopen(t *testing.T) {
 		}},
 	}
 	state.Keys["scope-a"] = &billing.KeyState{
-		Preview: "sk-tes…0001", Label: "Alice", InConfig: true, PlanID: "weekly",
-		Cycle:    billing.Cycle{PlanID: "weekly", StartAt: start, EndAt: start.Add(7 * 24 * time.Hour), SpentUSD: 1.5},
+		Preview: "sk-tes…0001", Label: "Alice", InConfig: true,
+		PlanBindings: []billing.PlanBinding{
+			{PlanID: "weekly", Cycle: billing.Cycle{
+				PlanID: "weekly", StartAt: start, EndAt: start.Add(7 * 24 * time.Hour), SpentUSD: 1.5,
+			}},
+			{PlanID: "custom"},
+		},
 		Lifetime: billing.Totals{CostUSD: 1.5, Requests: 3, UncachedInputTokens: 100, OutputTokens: 40},
 		ByModel: map[string]*billing.Totals{
 			"gpt-5.5": {CostUSD: 1.5, Requests: 3, UncachedInputTokens: 100, OutputTokens: 40},
 		},
 	}
 	state.Keys["scope-b"] = &billing.KeyState{
-		DeletedAt: start.Add(time.Hour), PlanID: "custom",
+		DeletedAt: start.Add(time.Hour), PlanBindings: []billing.PlanBinding{{PlanID: "custom"}},
 		ByModel: map[string]*billing.Totals{},
 	}
 	state.ModelGroups = []billing.ModelGroup{
@@ -106,8 +113,9 @@ func TestStateSurvivesAReopen(t *testing.T) {
 	if !reflect.DeepEqual(reloaded.Keys, state.Keys) {
 		t.Fatalf("keys = %+v, want %+v", reloaded.Keys["scope-a"], state.Keys["scope-a"])
 	}
-	if cycle := reloaded.Keys["scope-b"].Cycle; cycle != (billing.Cycle{}) {
-		t.Fatalf("cycle = %+v, want the zero cycle to survive as itself", cycle)
+	binding, exists := reloaded.Keys["scope-b"].FindPlanBinding("custom")
+	if !exists || binding.Cycle != (billing.Cycle{}) {
+		t.Fatalf("binding = %+v, want the zero cycle to survive as itself", binding)
 	}
 }
 
@@ -242,6 +250,32 @@ func TestOpenUpgradesAnOlderSchema(t *testing.T) {
 	mustSave(t, reopened, state, billing.Changes{ModelGroups: true})
 	if groups := mustLoad(t, reopened).State.ModelGroups; len(groups) != 1 {
 		t.Fatalf("groups = %+v, want the recreated table usable", groups)
+	}
+}
+
+func TestOpenMigratesLegacyPlanCycleToBinding(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	database := openDatabase(t, path)
+	start := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	_, errInsert := database.db.Exec(`
+		INSERT INTO api_keys (
+			scope, plan_id, cycle_plan_id, cycle_start_at, cycle_end_at, cycle_spent_usd
+		) VALUES (?, ?, ?, ?, ?, ?)`,
+		"scope-a", "grok", "grok", nanos(start), nanos(start.Add(24*time.Hour)), 12.5)
+	if errInsert != nil {
+		t.Fatalf("insert legacy key: %v", errInsert)
+	}
+	if _, errVersion := database.db.Exec("PRAGMA user_version = 2"); errVersion != nil {
+		t.Fatalf("set user_version: %v", errVersion)
+	}
+	if errClose := database.Close(); errClose != nil {
+		t.Fatalf("Close error = %v", errClose)
+	}
+
+	state := mustLoad(t, openDatabase(t, path)).State
+	binding, exists := state.Keys["scope-a"].FindPlanBinding("grok")
+	if !exists || binding.Cycle.SpentUSD != 12.5 || !binding.Cycle.StartAt.Equal(start) {
+		t.Fatalf("binding = %+v, want the legacy cycle preserved", binding)
 	}
 }
 

@@ -158,15 +158,20 @@ func TestPlanBindingsRoundTripThroughTheManagementAPI(t *testing.T) {
 		"period": map[string]any{"kind": "never"}, "scopes": []string{firstScope},
 	}, http.StatusCreated, nil)
 	byScope := keysByScope(t, app)
-	if len(byScope) != 2 || byScope[firstScope].PlanID != "team" || byScope[secondScope].PlanID != "" {
+	if len(byScope) != 2 || !viewHasPlan(byScope[firstScope], "team") ||
+		viewHasPlan(byScope[secondScope], "team") {
 		t.Fatalf("keys after create = %+v", byScope)
 	}
 
+	callOK(t, app, http.MethodPost, routePlans, nil, map[string]any{
+		"id": "extra", "name": "Extra", "amount_usd": 20,
+		"period": map[string]any{"kind": "never"}, "scopes": []string{firstScope},
+	}, http.StatusCreated, nil)
 	callOK(t, app, http.MethodPatch, routePlans, nil, map[string]any{
 		"id": "team", "scopes": []string{secondScope},
 	}, http.StatusOK, nil)
-	if byScope = keysByScope(t, app); byScope[firstScope].PlanID != "" ||
-		byScope[secondScope].PlanID != "team" {
+	if byScope = keysByScope(t, app); viewHasPlan(byScope[firstScope], "team") ||
+		!viewHasPlan(byScope[firstScope], "extra") || !viewHasPlan(byScope[secondScope], "team") {
 		t.Fatalf("keys after edit = %+v", byScope)
 	}
 }
@@ -178,6 +183,15 @@ func keysByScope(t *testing.T, app *App) map[string]billing.KeyView {
 		byScope[key.Scope] = key
 	}
 	return byScope
+}
+
+func viewHasPlan(view billing.KeyView, planID string) bool {
+	for _, binding := range view.PlanBindings {
+		if binding.PlanID == planID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestManagementErrorsMapToStatusCodes(t *testing.T) {

@@ -71,22 +71,22 @@ func (s *State) FindPlan(id string) (Plan, bool) {
 // settleExpiredCycle returns an elapsed timed subscription to its inactive
 // initial state. It never starts a new period; reads and manual resets therefore
 // cannot make an idle key's clock run.
-func settleExpiredCycle(key *KeyState, plan Plan, now time.Time) bool {
-	if plan.Period.Kind == PeriodNever || key.Cycle.StartAt.IsZero() || key.Cycle.EndAt.IsZero() || now.Before(key.Cycle.EndAt) {
+func settleExpiredCycle(cycle *Cycle, plan Plan, now time.Time) bool {
+	if cycle == nil || plan.Period.Kind == PeriodNever || cycle.StartAt.IsZero() || cycle.EndAt.IsZero() || now.Before(cycle.EndAt) {
 		return false
 	}
-	key.Cycle = Cycle{}
+	*cycle = Cycle{}
 	return true
 }
 
 // activateCycle settles an expired period and lazily starts the next one at the
 // instant this key is actually used. A never-reset plan records its first-use
 // time for history but intentionally has no EndAt.
-func activateCycle(key *KeyState, plan Plan, now time.Time) bool {
-	changed := settleExpiredCycle(key, plan, now)
-	if !key.Cycle.StartAt.IsZero() {
+func activateCycle(cycle *Cycle, plan Plan, now time.Time) bool {
+	changed := settleExpiredCycle(cycle, plan, now)
+	if cycle == nil || !cycle.StartAt.IsZero() {
 		return changed
 	}
-	key.Cycle = Cycle{PlanID: plan.ID, StartAt: now, EndAt: plan.CycleEnd(now)}
+	*cycle = Cycle{PlanID: plan.ID, StartAt: now, EndAt: plan.CycleEnd(now)}
 	return true
 }

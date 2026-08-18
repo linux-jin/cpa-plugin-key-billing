@@ -25,7 +25,7 @@ import (
 // meets, which is the point: version 2 holds the models each API Key may call,
 // and a version 1 plugin would serve that database while silently granting every
 // key every model.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // driverName is this package's own registration of the SQLite driver. It exists
 // for ulower(): the built-in lower() folds ASCII only, so a key labelled in any
@@ -98,7 +98,7 @@ func (d *DB) init() error {
 		// Every version so far has only added tables, which the statements above
 		// created. Recording that is what stops a plugin from before them from
 		// opening this database and reading it as complete.
-		return d.stampVersion()
+		return d.migrate(version)
 	}
 	return nil
 }

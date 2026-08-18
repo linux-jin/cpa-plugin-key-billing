@@ -99,6 +99,8 @@ tbody tr:hover{background:var(--bg-hover)}
 .tag.plain{background:var(--count-badge-bg);color:var(--count-badge-text)}
 .usage{display:flex;flex-direction:column;gap:5px;min-width:118px;max-width:210px}
 .usage>span{font-size:12px;white-space:nowrap}
+.usage-list{display:flex;flex-direction:column;gap:10px;min-width:160px}
+.usage-name{font-size:11px;color:var(--text-secondary);white-space:nowrap}
 .bar{height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;min-width:56px}
 .bar>i{display:block;height:100%;background:var(--primary-color)}
 .bar.full>i{background:var(--error-color)}
@@ -403,6 +405,14 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
       <div style="margin-top:14px">
         <div class="small muted" style="margin-bottom:6px">绑定 API Key</div>
         <div id="plan-key-picker" class="key-picker"></div>
+      </div>
+      <div style="margin-top:14px">
+        <div class="row spread" style="margin-bottom:6px">
+          <span class="small muted">适用模型（重叠时列表靠前的计划优先）</span>
+          <input id="plan-model-search" type="search" placeholder="搜索分组或模型" style="max-width:220px">
+        </div>
+        <div id="plan-model-picker" class="key-picker"></div>
+        <div id="plan-model-hint" class="small muted" style="margin-top:6px"></div>
       </div>
     </div>
   </section>
@@ -844,32 +854,45 @@ function keyPillText(view) {
   return view.label && view.label !== identity ? view.label + " · " + identity : identity;
 }
 
+function keyPlanBindings(view) {
+  if (Array.isArray(view.plan_bindings)) return view.plan_bindings;
+  return view.plan_id ? [{
+    plan_id: view.plan_id, plan_name: view.plan_name, limit_usd: view.limit_usd,
+    spent_usd: view.spent_usd, used_percent: view.used_percent,
+    blocked: view.blocked, cycle_end_at: view.cycle_end_at,
+  }] : [];
+}
+
+function keyHasPlan(view, planID) {
+  return keyPlanBindings(view).some((binding) => binding.plan_id === planID);
+}
+
+function keyPlanPills(view) {
+  const bindings = keyPlanBindings(view);
+  return bindings.length
+    ? el("div", { class: "key-pill-list" }, bindings.map((binding) =>
+        el("span", { class: "key-pill", text: binding.plan_name || binding.plan_id })))
+    : el("span", { class: "muted", text: "不限制" });
+}
+
+function keyPlanUsage(view) {
+  const bindings = keyPlanBindings(view);
+  if (!bindings.length) return el("span", { class: "muted", text: "—" });
+  return el("div", { class: "usage-list" }, bindings.map((binding) => {
+    const percent = Math.min(100, binding.used_percent || 0);
+    return el("div", { class: "usage" },
+      el("span", { class: "usage-name" }, binding.plan_name || binding.plan_id),
+      el("span", { class: "mono" }, usd(binding.spent_usd) + " / " + usd(binding.limit_usd)),
+      el("div", { class: "bar" + (binding.blocked ? " full" : "") }, el("i", { style: "width:" + percent + "%" })));
+  }));
+}
+
 function renderKeys() {
   const filter = $("key-filter").value.trim().toLowerCase();
   const rows = state.keys
-    .filter((view) => !filter || (keyName(view) + " " + (view.plan_name || "") + " " + view.scope).toLowerCase().includes(filter))
+    .filter((view) => !filter || (keyName(view) + " " + keyPlanBindings(view).map((binding) => binding.plan_name || binding.plan_id).join(" ") + " " + view.scope).toLowerCase().includes(filter))
     .map((view) => {
       const name = keyName(view);
-      const select = el("select", {
-        name: "plan_id",
-        "aria-label": name + " 的订阅计划",
-        onchange: (event) => guard(async () => {
-          const planID = event.target.value;
-          if (planID) await plugin("POST", "/keys/bind", { scope: view.scope, plan_id: planID });
-          else await plugin("POST", "/keys/unbind", { scope: view.scope });
-          notify("订阅计划已更新");
-          await reloadAll();
-        }),
-      }, el("option", { value: "", text: "不限制" }),
-         state.plans.map((plan) => el("option", { value: plan.id, selected: plan.id === view.plan_id }, plan.name || plan.id)));
-
-      const percent = view.unlimited ? 0 : Math.min(100, view.used_percent || 0);
-      const usage = view.unlimited
-        ? el("span", { class: "muted", text: "—" })
-        : el("div", { class: "usage" },
-            el("span", { class: "mono" }, usd(view.spent_usd) + " / " + usd(view.limit_usd)),
-            el("div", { class: "bar" + (view.blocked ? " full" : "") }, el("i", { style: "width:" + percent + "%" })));
-
       const notes = [];
       if (view.preview && view.preview !== name) notes.push(view.preview);
       if (!view.in_config) notes.push("不在 CLIProxyAPI Key 列表中");
@@ -879,9 +902,9 @@ function renderKeys() {
           el("div", {}, name),
           notes.length ? el("div", { class: "muted small mono" }, notes.join(" · ")) : null,
         ),
-        el("td", {}, select),
+        el("td", {}, keyPlanPills(view)),
         el("td", {}, modelTrigger(view)),
-        el("td", {}, usage),
+        el("td", {}, keyPlanUsage(view)),
         el("td", { class: "small muted" }, cycleNote(view)),
         el("td", { class: "num" }, int(view.lifetime?.requests)),
         el("td", { class: "num" }, usd(view.lifetime?.cost_usd)),
@@ -907,15 +930,19 @@ function renderKeys() {
     });
 
   $("keys-body").replaceChildren(table(
-    ["API Key", "订阅计划", "可用模型", "本期费用", "到期时间",
+    ["API Key", "订阅计划", "Key 模型限制", "各计划本期费用", "到期时间",
       { label: "累计请求", num: true }, { label: "累计费用", num: true }, "状态", "操作"],
     rows));
 }
 
 function cycleNote(view) {
-  if (view.unlimited) return "—";
-  if (state.plans.find((plan) => plan.id === view.plan_id)?.period?.kind === "never") return "不重置";
-  return view.cycle_end_at ? when(view.cycle_end_at) : "未开始";
+  const bindings = keyPlanBindings(view);
+  if (!bindings.length) return "—";
+  return el("div", { class: "usage-list" }, bindings.map((binding) => {
+    const plan = state.plans.find((entry) => entry.id === binding.plan_id);
+    const value = plan?.period?.kind === "never" ? "不重置" : (binding.cycle_end_at ? when(binding.cycle_end_at) : "未开始");
+    return el("span", {}, (binding.plan_name || binding.plan_id) + "：" + value);
+  }));
 }
 
 function groupName(id) {
@@ -1138,11 +1165,12 @@ function renderModels() {
 
 function renderPlans() {
   const rows = state.plans.map((plan) => {
-    const boundKeys = state.keys.filter((key) => key.plan_id === plan.id);
+    const boundKeys = state.keys.filter((key) => keyHasPlan(key, plan.id));
     return el("tr", {},
       el("td", {}, plan.name || plan.id),
       el("td", { class: "num" }, usd(plan.amount_usd)),
       el("td", {}, periodText(plan.period)),
+      el("td", {}, planModelSummary(plan)),
       el("td", {}, boundKeys.length
         ? el("div", { class: "key-pill-list" }, boundKeys.map((key) =>
             el("span", { class: "key-pill", text: keyPillText(key), title: key.scope })))
@@ -1151,7 +1179,7 @@ function renderPlans() {
         el("button", { class: "link", text: "编辑", onclick: () => editPlan(plan) }),
         el("button", { class: "link danger", text: "删除", onclick: () => guard(async () => {
           if (!await confirmAction("删除订阅计划「" + (plan.name || plan.id) + "」？",
-            boundKeys.length ? ("已绑定的 " + boundKeys.length + " 个 API Key 将改为不限制。") : "")) return;
+            boundKeys.length ? ("将从 " + boundKeys.length + " 个 API Key 移除此计划；其他计划不受影响。") : "")) return;
           await plugin("DELETE", "/plans?id=" + encodeURIComponent(plan.id));
           notify("订阅计划已删除"); resetPlanForm(); await reloadAll();
         }) }),
@@ -1159,9 +1187,19 @@ function renderPlans() {
     );
   });
   $("plans-body").replaceChildren(table(
-    ["名称", { label: "额度", num: true }, "周期", "已绑定 Key", "操作"],
+    ["名称", { label: "额度", num: true }, "周期", "适用模型", "已绑定 Key", "操作"],
     rows));
   renderPlanKeyPicker($("plan-id").value);
+}
+
+function planModelSummary(plan) {
+  const groups = plan.model_groups || [];
+  const models = plan.models || [];
+  if (!groups.length && !models.length) return el("span", { class: "tag plain", text: ALL_GROUP_NAME });
+  const names = groups.map(groupName).concat(models);
+  return el("div", { class: "key-pill-list" }, names.slice(0, 5).map((name) =>
+    el("span", { class: "key-pill", text: name })).concat(
+      names.length > 5 ? [el("span", { class: "muted small" }, "+" + (names.length - 5))] : []));
 }
 
 function keyPills(keys) {
@@ -1598,6 +1636,40 @@ function syncPlanFields() {
   const kind = $("plan-kind").value;
   $("plan-seconds-field").classList.toggle("hidden", kind !== "custom");
 }
+let planModelSelection = { all: true, groups: new Set(), models: new Set() };
+
+function renderPlanModelPicker() {
+  const term = $("plan-model-search").value.trim().toLowerCase();
+  const options = [];
+  if (matchesTerm(ALL_GROUP_NAME, term)) {
+    options.push(pickerOption(planModelSelection.all, false, "group", ALL_GROUP_NAME, "全部", (checked) => {
+      planModelSelection.all = checked;
+      renderPlanModelPicker();
+    }));
+  }
+  for (const group of state.groups) {
+    if (!matchesTerm(group.name || group.id, term)) continue;
+    options.push(pickerOption(!planModelSelection.all && planModelSelection.groups.has(group.id), planModelSelection.all,
+      "group", group.name || group.id, (group.models || []).length + " 个模型", (checked) => {
+        if (checked) planModelSelection.groups.add(group.id); else planModelSelection.groups.delete(group.id);
+        renderPlanModelPicker();
+      }));
+  }
+  const known = catalogModels().concat(retiredModels(planModelSelection.models));
+  for (const model of known.filter((entry) => matchesTerm(entry, term))) {
+    options.push(pickerOption(!planModelSelection.all && planModelSelection.models.has(model), planModelSelection.all,
+      "model", model, "", (checked) => {
+        if (checked) planModelSelection.models.add(model); else planModelSelection.models.delete(model);
+        renderPlanModelPicker();
+      }));
+  }
+  $("plan-model-picker").replaceChildren(...(options.length ? options : [el("div", { class: "empty", text: "没有匹配的分组或模型" })]));
+  const selected = planModelSelection.groups.size + planModelSelection.models.size;
+  $("plan-model-hint").textContent = planModelSelection.all
+    ? "该计划匹配全部模型；旧计划升级后保持此行为"
+    : (selected ? "该计划匹配所选分组和模型的并集" : "请至少选择一个分组或模型，或者选择「" + ALL_GROUP_NAME + "」");
+}
+
 function renderPlanKeyPicker(planID) {
   const picker = $("plan-key-picker");
   if (!state.keys.length) {
@@ -1605,14 +1677,12 @@ function renderPlanKeyPicker(planID) {
     return;
   }
   picker.replaceChildren(...state.keys.map((key) => {
-    const ownedByOther = !!key.plan_id && key.plan_id !== planID;
-    const owner = ownedByOther ? state.plans.find((plan) => plan.id === key.plan_id) : null;
-    return el("label", { class: ownedByOther ? "disabled" : "" },
-    el("input", { type: "checkbox", value: key.scope, checked: key.plan_id === planID && !!planID,
-      disabled: ownedByOther || undefined }),
+    const otherPlans = keyPlanBindings(key).filter((binding) => binding.plan_id !== planID);
+    return el("label", {},
+    el("input", { type: "checkbox", value: key.scope, checked: keyHasPlan(key, planID) && !!planID }),
     el("span", {}, keyName(key)),
     key.preview && key.preview !== keyName(key) ? el("span", { class: "muted small mono" }, key.preview) : null,
-    owner ? el("span", { class: "muted small", text: "已绑定「" + (owner.name || owner.id) + "」" }) : null,
+    otherPlans.length ? el("span", { class: "muted small", text: "另有 " + otherPlans.length + " 个计划" }) : null,
   );
   }));
 }
@@ -1626,9 +1696,12 @@ function resetPlanForm() {
   $("plan-id").value = ""; $("plan-name").value = ""; $("plan-amount").value = "";
   $("plan-kind").value = "daily";
   $("plan-seconds").value = "3600";
+  $("plan-model-search").value = "";
+  planModelSelection = { all: true, groups: new Set(), models: new Set() };
   $("plan-cancel").classList.add("hidden");
   syncPlanFields();
   renderPlanKeyPicker("");
+  renderPlanModelPicker();
 }
 function editPlan(plan) {
   $("plan-form-title").textContent = "编辑订阅计划：" + (plan.name || plan.id);
@@ -1637,9 +1710,14 @@ function editPlan(plan) {
   $("plan-amount").value = plan.amount_usd ?? 0;
   $("plan-kind").value = plan.period?.kind || "daily";
   $("plan-seconds").value = String(plan.period?.seconds || 3600);
+  $("plan-model-search").value = "";
+  const groups = new Set(plan.model_groups || []);
+  const models = new Set(plan.models || []);
+  planModelSelection = { all: !groups.size && !models.size, groups, models };
   $("plan-cancel").classList.remove("hidden");
   syncPlanFields();
   renderPlanKeyPicker(plan.id);
+  renderPlanModelPicker();
   $("plan-name").scrollIntoView({ block: "center", behavior: "smooth" });
 }
 function planFromForm() {
@@ -1648,10 +1726,14 @@ function planFromForm() {
   if (kind === "custom") period.seconds = Number($("plan-seconds").value);
   const amount = Number($("plan-amount").value);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("额度必须大于 0");
+  const selected = planModelSelection.groups.size + planModelSelection.models.size;
+  if (!planModelSelection.all && !selected) throw new Error("请为计划选择适用模型，或选择「" + ALL_GROUP_NAME + "」");
   return {
     name: $("plan-name").value.trim(),
     amount_usd: amount,
     period,
+    model_groups: planModelSelection.all ? [] : [...planModelSelection.groups],
+    models: planModelSelection.all ? [] : [...planModelSelection.models],
     scopes: selectedPlanScopes(),
   };
 }
@@ -1826,6 +1908,7 @@ for (const tab of TABS) {
 
 $("key-filter").addEventListener("input", renderKeys);
 $("plan-kind").addEventListener("change", syncPlanFields);
+$("plan-model-search").addEventListener("input", renderPlanModelPicker);
 $("plan-cancel").onclick = resetPlanForm;
 $("plan-save").onclick = () => guard(async () => {
   const plan = planFromForm();

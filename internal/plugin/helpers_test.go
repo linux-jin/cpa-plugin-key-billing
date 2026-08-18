@@ -75,15 +75,16 @@ func mustMarshal(t *testing.T, v any) []byte {
 func testConfigYAML(t *testing.T, enabled bool) []byte {
 	t.Helper()
 	return []byte("enabled: " + strconv.FormatBool(enabled) +
-		"\nstate_file: \"" + filepath.Join(t.TempDir(), "state.db") + "\"\n")
+		"\nstate_file: " + strconv.Quote(filepath.Join(t.TempDir(), "state.db")) + "\n")
 }
 
 func newConfiguredApp(t *testing.T) *App {
 	t.Helper()
+	configYAML := testConfigYAML(t, true)
 	app := NewApp()
 	t.Cleanup(app.Shutdown)
 	raw, errHandle := app.HandleMethod(MethodPluginRegister, mustMarshal(t, LifecycleRequest{
-		ConfigYAML: testConfigYAML(t, true),
+		ConfigYAML: configYAML,
 	}))
 	if errHandle != nil {
 		t.Fatalf("plugin.register error = %v", errHandle)
@@ -99,10 +100,10 @@ func newAppWithPrice(t *testing.T, enabled bool) *App {
 
 func newAppWithPriceAndState(t *testing.T, enabled bool) (*App, string) {
 	t.Helper()
+	statePath := filepath.Join(t.TempDir(), "state.db")
 	app := NewApp()
 	t.Cleanup(app.Shutdown)
-	statePath := filepath.Join(t.TempDir(), "state.db")
-	configYAML := "enabled: " + strconv.FormatBool(enabled) + "\nstate_file: \"" + statePath + "\"\n"
+	configYAML := "enabled: " + strconv.FormatBool(enabled) + "\nstate_file: " + strconv.Quote(statePath) + "\n"
 	if _, errHandle := app.HandleMethod(MethodPluginRegister, mustMarshal(t, LifecycleRequest{
 		ConfigYAML: []byte(configYAML),
 	})); errHandle != nil {

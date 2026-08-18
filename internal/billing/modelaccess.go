@@ -58,21 +58,10 @@ func (s *State) FindModelGroup(id string) (ModelGroup, bool) {
 // key too: reading it as a denial would lock a key out of the proxy over a
 // record nobody meant that way.
 func (s *State) AllowedModels(key *KeyState) ([]string, bool) {
-	if key == nil || (len(key.ModelGroupIDs) == 0 && len(key.Models) == 0) {
+	if key == nil {
 		return nil, false
 	}
-	models := slices.Clone(key.Models)
-	for _, id := range key.ModelGroupIDs {
-		if group, exists := s.FindModelGroup(id); exists {
-			models = append(models, group.Models...)
-		}
-	}
-	models = dedupe(models)
-	if len(models) == 0 {
-		return nil, false
-	}
-	sort.Strings(models)
-	return models, true
+	return s.modelsForSelection(key.ModelGroupIDs, key.Models)
 }
 
 // ModelDecision is why a request was turned away. Model is the identity the
@@ -100,11 +89,18 @@ func (s *Store) AuthorizeModel(scope, upstreamModel, routeModel string) ModelDec
 	}
 	decision := allowed
 	s.Read(func(state *State) {
+		billingModel := state.ResolveBillingModel(upstreamModel, routeModel)
+		if strings.TrimSpace(billingModel) == "" {
+			return
+		}
+		decision.Model = billingModel
 		key := state.Keys[scope]
 		if key == nil {
 			return
 		}
-		models, restricted := state.AllowedModels(key)
+		keyModels, keyRestricted := state.AllowedModels(key)
+		planModels, planRestricted := state.AllowedPlanModels(key)
+		models, restricted := intersectModelGrants(keyModels, keyRestricted, planModels, planRestricted)
 		if !restricted {
 			return
 		}
@@ -119,14 +115,8 @@ func (s *Store) AuthorizeModel(scope, upstreamModel, routeModel string) ModelDec
 		//	an alias is judged by the model the client named, so a route
 		//	resolving onto a granted model cannot carry a request the key was
 		//	never granted
-		billingModel := state.ResolveBillingModel(upstreamModel, routeModel)
-		if strings.TrimSpace(billingModel) == "" {
+		if containsModel(models, billingModel) {
 			return
-		}
-		for _, model := range models {
-			if strings.EqualFold(model, billingModel) {
-				return
-			}
 		}
 		decision = ModelDecision{Model: billingModel, Models: models}
 	})
@@ -244,18 +234,41 @@ func (s *Store) DeleteModelGroup(id string) (int, error) {
 			key := state.Keys[scope]
 			key.ModelGroupIDs = slices.DeleteFunc(key.ModelGroupIDs, func(bound string) bool { return bound == id })
 		}
+		plansChanged := false
+		for index := range state.Plans {
+			before := len(state.Plans[index].ModelGroupIDs)
+			state.Plans[index].ModelGroupIDs = slices.DeleteFunc(
+				state.Plans[index].ModelGroupIDs,
+				func(bound string) bool { return bound == id },
+			)
+			plansChanged = plansChanged || before != len(state.Plans[index].ModelGroupIDs)
+		}
 		s.denied.forget(scopes...)
-		return len(scopes), Changes{ModelGroups: true, Keys: scopes}
+		return len(scopes), Changes{ModelGroups: true, Plans: plansChanged, Keys: scopes}
 	})
 	return released, errApply
 }
 
 func (s *State) groupMembers(id string) []string {
-	var scopes []string
+	members := make(map[string]struct{})
 	for scope, key := range s.Keys {
 		if key != nil && slices.Contains(key.ModelGroupIDs, id) {
-			scopes = append(scopes, scope)
+			members[scope] = struct{}{}
 		}
+	}
+	for _, plan := range s.Plans {
+		if !slices.Contains(plan.ModelGroupIDs, id) {
+			continue
+		}
+		for scope, key := range s.Keys {
+			if key != nil && key.HasPlan(plan.ID) {
+				members[scope] = struct{}{}
+			}
+		}
+	}
+	scopes := make([]string, 0, len(members))
+	for scope := range members {
+		scopes = append(scopes, scope)
 	}
 	sort.Strings(scopes)
 	return scopes

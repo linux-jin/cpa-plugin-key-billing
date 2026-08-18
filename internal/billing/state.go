@@ -67,10 +67,12 @@ type Period struct {
 }
 
 type Plan struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	AmountUSD float64 `json:"amount_usd"`
-	Period    Period  `json:"period"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	AmountUSD     float64  `json:"amount_usd"`
+	Period        Period   `json:"period"`
+	ModelGroupIDs []string `json:"model_groups,omitempty"`
+	Models        []string `json:"models,omitempty"`
 }
 
 // ModelGroup is a named subset of the models the proxy serves. Membership is
@@ -99,7 +101,9 @@ type KeyState struct {
 	// masked key and remark from here.
 	InConfig  bool      `json:"in_config,omitempty"`
 	DeletedAt time.Time `json:"deleted_at,omitzero"`
-	PlanID    string    `json:"plan_id,omitempty"`
+	// PlanID and Cycle only decode the legacy single-plan JSON shape. Runtime
+	// code normalizes them into PlanBindings and clears both fields.
+	PlanID string `json:"plan_id,omitempty"`
 	// ModelGroupIDs and Models together name what this key may call: the union
 	// of every bound group and every individually selected model. Both empty is
 	// the all-models grant every key starts with, which is also what makes a key
@@ -107,9 +111,15 @@ type KeyState struct {
 	// traffic — unrestricted rather than locked out.
 	ModelGroupIDs []string           `json:"model_groups,omitempty"`
 	Models        []string           `json:"models,omitempty"`
-	Cycle         Cycle              `json:"cycle"`
+	Cycle         Cycle              `json:"cycle,omitempty"`
+	PlanBindings  []PlanBinding      `json:"plan_bindings,omitempty"`
 	Lifetime      Totals             `json:"lifetime"`
 	ByModel       map[string]*Totals `json:"by_model,omitempty"`
+}
+
+type PlanBinding struct {
+	PlanID string `json:"plan_id"`
+	Cycle  Cycle  `json:"cycle"`
 }
 
 type Cycle struct {

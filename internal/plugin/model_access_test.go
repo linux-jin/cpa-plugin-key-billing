@@ -130,8 +130,9 @@ func TestForbiddenModelLeavesTheSubscriptionUntouched(t *testing.T) {
 		t.Fatal("a model the key may not call was admitted")
 	}
 	app.store.Read(func(state *billing.State) {
-		if cycle := state.Keys[flowScope()].Cycle; cycle != (billing.Cycle{}) {
-			t.Fatalf("cycle = %+v, want it left inactive", cycle)
+		binding, exists := state.Keys[flowScope()].FindPlanBinding("daily")
+		if !exists || binding.Cycle != (billing.Cycle{}) {
+			t.Fatalf("binding = %+v, want it left inactive", binding)
 		}
 	})
 }

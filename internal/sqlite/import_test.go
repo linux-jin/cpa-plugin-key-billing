@@ -44,7 +44,9 @@ func TestOpenImportsTheDocumentItReplaces(t *testing.T) {
 	path := filepath.Join(dir, "state.db")
 	snapshot := mustLoad(t, openDatabase(t, path))
 	key := snapshot.State.Keys["scope-a"]
-	if key == nil || key.Label != "Alice" || key.Cycle.SpentUSD != 1.5 || !key.Cycle.EndAt.Equal(at.Add(7*24*time.Hour)) {
+	binding, bound := key.FindPlanBinding("weekly")
+	if key == nil || key.Label != "Alice" || !bound || binding.Cycle.SpentUSD != 1.5 ||
+		!binding.Cycle.EndAt.Equal(at.Add(7*24*time.Hour)) {
 		t.Fatalf("key = %+v", key)
 	}
 	if len(snapshot.State.Plans) != 1 || len(snapshot.State.Prices) != 1 || snapshot.LogEntries != 1 {

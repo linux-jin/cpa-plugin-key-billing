@@ -37,7 +37,7 @@ func subsetEvent(scope string, at time.Time) UsageEvent {
 }
 
 func admittedEvent(store *Store, scope string, at time.Time) UsageEvent {
-	decision := store.Authorize(scope, at)
+	decision := store.Authorize(scope, "", at)
 	event := subsetEvent(scope, at)
 	event.CyclePlanID = decision.PlanID
 	event.CycleStartAt = decision.CycleStartAt
@@ -111,10 +111,10 @@ func TestConcurrentLateCompletionDoesNotChargeNewCycle(t *testing.T) {
 	store := newAccountStore(t, start)
 	store.ReplaceAll(func(state *State) {
 		state.Plans = []Plan{{ID: "daily", AmountUSD: 5, Period: Period{Kind: PeriodDaily}}}
-		state.Keys["scope-a"] = &KeyState{PlanID: "daily"}
+		state.Keys["scope-a"] = &KeyState{PlanBindings: []PlanBinding{{PlanID: "daily"}}}
 	})
-	firstCycle := store.Authorize("scope-a", start)
-	newCycle := store.Authorize("scope-a", start.Add(25*time.Hour))
+	firstCycle := store.Authorize("scope-a", "", start)
+	newCycle := store.Authorize("scope-a", "", start.Add(25*time.Hour))
 	if newCycle.CycleStartAt.Equal(firstCycle.CycleStartAt) {
 		t.Fatal("new request did not start a new cycle")
 	}
@@ -126,8 +126,9 @@ func TestConcurrentLateCompletionDoesNotChargeNewCycle(t *testing.T) {
 
 	store.Read(func(state *State) {
 		key := state.Keys["scope-a"]
-		if !key.Cycle.StartAt.Equal(newCycle.CycleStartAt) || key.Cycle.SpentUSD != 0 {
-			t.Fatalf("new cycle was charged: %+v", key.Cycle)
+		cycle := mustBinding(t, key, "daily").Cycle
+		if !cycle.StartAt.Equal(newCycle.CycleStartAt) || cycle.SpentUSD != 0 {
+			t.Fatalf("new cycle was charged: %+v", cycle)
 		}
 		assertClose(t, "Lifetime.CostUSD", key.Lifetime.CostUSD, wantSubsetCost)
 	})
