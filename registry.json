@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-plugin-key-billing",
+      "name": "Cpa Key Billing",
+      "description": "CLIProxyAPI 下游 API Key 计费与订阅额度插件",
+      "author": "haowang02",
+      "version": "0.5.0",
+      "repository": "https://github.com/haowang02/cpa-plugin-key-billing",
+      "homepage": "https://github.com/haowang02/cpa-plugin-key-billing",
+      "license": "MIT",
+      "tags": ["Management", "Billing", "Stats"]
+    }
+  ]
+}
