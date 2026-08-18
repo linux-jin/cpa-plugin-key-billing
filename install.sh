@@ -36,7 +36,7 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 command -v curl >/dev/null 2>&1 || fail "curl is required to download the plugin"
-command -v tar >/dev/null 2>&1 || fail "tar is required to extract the plugin"
+command -v unzip >/dev/null 2>&1 || fail "unzip is required to extract the plugin"
 
 case "$(uname -s)" in
   Darwin)
@@ -64,7 +64,16 @@ case "$(uname -m)" in
     ;;
 esac
 
-asset="${plugin_name}_${target_os}_${target_arch}.tar.gz"
+latest_url="https://github.com/${repository}/releases/latest"
+release_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$latest_url")" \
+  || fail "failed to resolve latest release: ${latest_url}"
+release_tag="${release_url##*/}"
+case "$release_tag" in
+  v?*) release_version="${release_tag#v}" ;;
+  *) fail "latest release has an invalid tag: ${release_tag}" ;;
+esac
+
+asset="${plugin_name}_${release_version}_${target_os}_${target_arch}.zip"
 plugin_file="${plugin_name}.${extension}"
 download_url="https://github.com/${repository}/releases/latest/download/${asset}"
 checksums_url="https://github.com/${repository}/releases/latest/download/checksums.txt"
@@ -86,7 +95,7 @@ actual_checksum="$(checksum_file "$archive")"
 [ "$actual_checksum" = "$expected_checksum" ] \
   || fail "download checksum mismatch"
 
-tar -xzf "$archive" -C "$tmp_dir" "$plugin_file" \
+unzip -q "$archive" "$plugin_file" -d "$tmp_dir" \
   || fail "release archive does not contain ${plugin_file}"
 [ -s "${tmp_dir}/${plugin_file}" ] || fail "release archive contains an empty ${plugin_file}"
 
