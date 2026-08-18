@@ -6,7 +6,7 @@
       "name": "Cpa Key Billing",
       "description": "CLIProxyAPI 下游 API Key 计费与订阅额度插件",
       "author": "linux-jin",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "repository": "https://github.com/linux-jin/cpa-plugin-key-billing",
       "homepage": "https://github.com/linux-jin/cpa-plugin-key-billing",
       "license": "MIT",
